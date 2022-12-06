@@ -3,10 +3,10 @@ package parse
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/url"
 
-	"github.com/oopsguy/m3u8/tool"
+	"github.com/bineyond/m3u8/tool"
 )
 
 type Result struct {
@@ -25,7 +25,7 @@ func FromURL(link string) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request m3u8 URL failed: %s", err.Error())
 	}
-	//noinspection GoUnhandledErrorResult
+	// noinspection GoUnhandledErrorResult
 	defer body.Close()
 	m3u8, err := parse(body)
 	if err != nil {
@@ -56,12 +56,12 @@ func FromURL(link string) (*Result, error) {
 			if err != nil {
 				return nil, fmt.Errorf("extract key failed: %s", err.Error())
 			}
-			keyByte, err := ioutil.ReadAll(resp)
+			keyByte, err := io.ReadAll(resp)
 			_ = resp.Close()
 			if err != nil {
 				return nil, err
 			}
-			fmt.Println("decryption key: ", string(keyByte))
+			// fmt.Println("decryption key: ", string(keyByte))
 			result.Keys[idx] = string(keyByte)
 		default:
 			return nil, fmt.Errorf("unknown or unsupported cryption method: %s", key.Method)

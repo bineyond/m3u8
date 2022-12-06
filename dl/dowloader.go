@@ -3,23 +3,31 @@ package dl
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	"github.com/oopsguy/m3u8/parse"
-	"github.com/oopsguy/m3u8/tool"
+	"github.com/bineyond/m3u8/parse"
+	"github.com/bineyond/m3u8/tool"
 )
 
 const (
 	tsExt            = ".ts"
 	tsFolderName     = "ts"
 	mergeTSFilename  = "main.ts"
+	mergeMp4Filename = "main.mp4"
 	tsTempFileSuffix = "_tmp"
 	progressWidth    = 40
+)
+
+var (
+	MergeTSFilename  = mergeTSFilename
+	MergeMp4Filename = mergeMp4Filename
+	MergeFileMp4Type = false
 )
 
 type Downloader struct {
@@ -87,7 +95,7 @@ func (d *Downloader) Start(concurrency int) error {
 				// Back into the queue, retry request
 				fmt.Printf("[failed] %s\n", err.Error())
 				if err := d.back(idx); err != nil {
-					fmt.Printf(err.Error())
+					fmt.Print(err.Error())
 				}
 			}
 			<-limitChan
@@ -108,7 +116,7 @@ func (d *Downloader) download(segIndex int) error {
 	if e != nil {
 		return fmt.Errorf("request %s, %s", tsUrl, e.Error())
 	}
-	//noinspection GoUnhandledErrorResult
+	// noinspection GoUnhandledErrorResult
 	defer b.Close()
 	fPath := filepath.Join(d.tsFolder, tsFilename)
 	fTemp := fPath + tsTempFileSuffix
@@ -116,7 +124,7 @@ func (d *Downloader) download(segIndex int) error {
 	if err != nil {
 		return fmt.Errorf("create file: %s, %s", tsFilename, err.Error())
 	}
-	bytes, err := ioutil.ReadAll(b)
+	bytes, err := io.ReadAll(b)
 	if err != nil {
 		return fmt.Errorf("read bytes: %s, %s", tsUrl, err.Error())
 	}
@@ -135,7 +143,7 @@ func (d *Downloader) download(segIndex int) error {
 	// https://en.wikipedia.org/wiki/MPEG_transport_stream
 	// Some TS files do not start with SyncByte 0x47, they can not be played after merging,
 	// Need to remove the bytes before the SyncByte 0x47(71).
-	syncByte := uint8(71) //0x47
+	syncByte := uint8(71) // 0x47
 	bLen := len(bytes)
 	for j := 0; j < bLen; j++ {
 		if bytes[j] == syncByte {
@@ -154,7 +162,7 @@ func (d *Downloader) download(segIndex int) error {
 	}
 	// Maybe it will be safer in this way...
 	atomic.AddInt32(&d.finish, 1)
-	//tool.DrawProgressBar("Downloading", float32(d.finish)/float32(d.segLen), progressWidth)
+	// tool.DrawProgressBar("Downloading", float32(d.finish)/float32(d.segLen), progressWidth)
 	fmt.Printf("[download %6.2f%%] %s\n", float32(d.finish)/float32(d.segLen)*100, tsUrl)
 	return nil
 }
@@ -202,19 +210,19 @@ func (d *Downloader) merge() error {
 	}
 
 	// Create a TS file for merging, all segment files will be written to this file.
-	mFilePath := filepath.Join(d.folder, mergeTSFilename)
+	mFilePath := filepath.Join(d.folder, MergeTSFilename)
 	mFile, err := os.Create(mFilePath)
 	if err != nil {
 		return fmt.Errorf("create main TS file failed：%s", err.Error())
 	}
-	//noinspection GoUnhandledErrorResult
+	// noinspection GoUnhandledErrorResult
 	defer mFile.Close()
 
 	writer := bufio.NewWriter(mFile)
 	mergedCount := 0
 	for segIndex := 0; segIndex < d.segLen; segIndex++ {
 		tsFilename := tsFilename(segIndex)
-		bytes, err := ioutil.ReadFile(filepath.Join(d.tsFolder, tsFilename))
+		bytes, _ := os.ReadFile(filepath.Join(d.tsFolder, tsFilename))
 		_, err = writer.Write(bytes)
 		if err != nil {
 			continue
@@ -231,8 +239,20 @@ func (d *Downloader) merge() error {
 		fmt.Printf("[warning] \n%d files merge failed", d.segLen-mergedCount)
 	}
 
-	fmt.Printf("\n[output] %s\n", mFilePath)
+	if !MergeFileMp4Type {
+		fmt.Printf("\n[output] %s\n", mFilePath)
+		return nil
 
+	}
+
+	mMp4FilePath := filepath.Join(d.folder, MergeMp4Filename)
+	err = ts2mp4(mFilePath, mMp4FilePath)
+	if err != nil {
+		return fmt.Errorf("ts2mp4 failed：%s", err.Error())
+	}
+
+	_ = os.RemoveAll(mFilePath)
+	fmt.Printf("\n[output] %s\n", mMp4FilePath)
 	return nil
 }
 
@@ -251,4 +271,16 @@ func genSlice(len int) []int {
 		s = append(s, i)
 	}
 	return s
+}
+
+func ts2mp4(input, output string) (err error) {
+	c := exec.Command("ffmpeg",
+		"-i", input,
+		"-loglevel", "quiet",
+		"-codec", "copy",
+		output)
+
+	// fmt.Print(c.String())
+
+	return c.Run()
 }
